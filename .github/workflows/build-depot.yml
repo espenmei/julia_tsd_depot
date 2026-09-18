@@ -1,0 +1,51 @@
+name: Build offline Julia depot (Linux)
+
+# Builds a Linux-native Julia package depot (source + Linux artifacts +
+# Linux-compiled precompile cache) so it can be transferred to a Linux
+# HPC cluster (e.g. Colossus/TSD) that has no internet access. Building
+# the depot on Windows does NOT work: artifacts and the compiled cache
+# are platform-specific, which is why packages fail to precompile once
+# copied over.
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - "Project.toml"
+      - "Manifest.toml"
+      - "updepot.jl"
+      - ".github/workflows/build-depot.yml"
+
+jobs:
+  build-depot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12.2"
+
+      - name: Build offline depot
+        env:
+          JULIA_DEPOT_PATH: ${{ github.workspace }}/offline_depot
+        run: julia updepot.jl
+
+      - name: Precompile packages into the depot
+        env:
+          JULIA_DEPOT_PATH: ${{ github.workspace }}/offline_depot
+        run: julia --project=. -e 'using Pkg; Pkg.precompile()'
+
+      - name: Zip offline depot
+        run: |
+          cd offline_depot
+          zip -r ../offline_depot_linux.zip .
+
+      - name: Upload offline depot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline_depot_linux
+          path: offline_depot_linux.zip
+          retention-days: 14
