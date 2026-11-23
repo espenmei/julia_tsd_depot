@@ -21,13 +21,14 @@ Edit `updepot.jl` (package list) and/or `Project.toml` in this folder.
 Commit and push to `main`:
 
 ```powershell
-git add Project.toml Manifest.toml updepot.jl
+git add Project.toml Manifest.toml updepot.jl greml_gpu prefetch_cuda_artifacts.jl .github/workflows/build-depot.yml
 git commit -m "Update package list"
 git push
 ```
 
-Pushing changes to `Project.toml`, `Manifest.toml`, `updepot.jl`, or the
-workflow file automatically triggers the build. You can also trigger it
+Pushing changes to `Project.toml`, `Manifest.toml`, `updepot.jl`,
+`greml_gpu/`, `prefetch_cuda_artifacts.jl`, or the workflow file
+automatically triggers the build. You can also trigger it
 manually from the GitHub Actions tab ("Run workflow" button) without
 changing anything.
 
@@ -46,8 +47,8 @@ changing anything.
 ## 3. Transfer the zip to Colossus
 
 Use `scp`/`sftp` or the TSD file import mechanism to copy the
-downloaded zip onto Colossus. It's roughly 700 MB, so allow time for
-the transfer.
+downloaded zip onto Colossus. The depot includes large CUDA artifacts;
+allow time and storage for the transfer and extraction.
 
 **Important**: GitHub always wraps a downloaded Actions artifact in an
 extra outer zip, even though the file inside already has the same
@@ -87,6 +88,23 @@ ls offline_depot
 If `offline_depot` looks tiny or is missing `packages`/`artifacts`, you
 likely only did the first unzip — repeat step 4.
 
+### Find the extracted depot directory
+
+The path to use is the `offline_depot` directory created by the second
+unzip, not necessarily one of the default paths printed by Julia. From the
+TSD shell, find it with:
+
+```bash
+find "$HOME" -maxdepth 5 -type d -name offline_depot -print
+```
+
+Use the full path printed by this command as `JULIA_DEPOT_PATH`. For example,
+if the result is `/cluster/home/username/TSD/offline_depot`:
+
+```bash
+export JULIA_DEPOT_PATH=/cluster/home/username/TSD/offline_depot
+```
+
 ## 5. Use the depot offline
 
 ```bash
@@ -104,3 +122,36 @@ Do **not** run `Pkg.update()` offline — it always needs network access
 to refresh the registry. Only `instantiate()`/`precompile()` are
 needed, and everything required should already be present in the
 depot.
+
+## GREML GPU test
+
+The workflow also instantiates the separate locked `greml_gpu` environment,
+whose dependency versions and tree hashes match the GREML GPU test bundle.
+This keeps the existing depot project separate. `SnpArrays` in this depot
+environment is the registered 0.3.23 release: the GPU test bundle supplies
+its own patched SnpArrays source and must be transferred separately.
+
+The workflow explicitly downloads the Linux x86_64 CUDA **12.8** runtime and
+compiler artifacts. Building without a GPU does not test the actual driver,
+GPU compilation, or all possible lazy artifacts. A compatible NVIDIA driver
+and working GPU node are still required.
+
+After extracting both the depot and the GPU test bundle, load the intended
+Julia module and set `JULIA_DEPOT_PATH` and `JULIA_PKG_OFFLINE` as above.
+From the extracted GPU test directory, configure that project to select the
+same CUDA artifacts, then instantiate:
+
+```bash
+julia --startup-file=no --project=gpu -e 'using CUDA; CUDA.set_runtime_version!(v"12.8"; local_toolkit=false)'
+julia --startup-file=no --project=gpu -e 'using Pkg; Pkg.instantiate()'
+sbatch tsd/run_gpu.sbatch
+```
+
+The first command writes CUDA preferences into the **test project**; restart
+Julia before using them, as shown above. Do not copy the depot's GPU manifest
+over the test manifest: the latter points at the patched local SnpArrays.
+The test manifest was resolved with Julia 1.12.5; offline instantiation and
+the CPU product tests have also been checked on Linux with Julia 1.12.2.
+This did not test a GPU or the TSD system. Verify the target Julia version and
+offline instantiation before submitting, and check both Slurm output files if
+the GPU test fails.

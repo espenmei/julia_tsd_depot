@@ -19,6 +19,7 @@ pakkebunt = [
     "Distributions",
     "GLM",
     "HDF5",
+    "IterativeSolvers",
     "JLD",
     "JLD2",
     "LazyArtifacts",
